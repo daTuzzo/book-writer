@@ -13,6 +13,9 @@ import {
   AlignLeft,
   Calculator,
   Loader2,
+  AlertTriangle,
+  CheckCircle2,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -24,6 +27,12 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useProjectStore } from "@/stores/project-store";
 import { useChatStore } from "@/stores/chat-store";
 import { useUIStore } from "@/stores/ui-store";
@@ -49,6 +58,19 @@ export default function WritePage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [showTokenCalc, setShowTokenCalc] = useState(false);
+  const [isCheckingContinuity, setIsCheckingContinuity] = useState(false);
+  const [continuityResult, setContinuityResult] = useState<{
+    issues: Array<{
+      type: string;
+      severity: string;
+      description: string;
+      location?: string;
+      suggestion: string;
+    }>;
+    suggestions: string[];
+    isConsistent: boolean;
+  } | null>(null);
+  const [showContinuityDialog, setShowContinuityDialog] = useState(false);
   const editorRef = useRef<TiptapEditorRef>(null);
 
   const chatMessages = messages[`chapter-${chapterId}`] || [];
@@ -90,10 +112,11 @@ export default function WritePage() {
     setIsGenerating(true);
 
     try {
-      // Prepare messages for the API
-      const messages = chatMessages.concat([
-        { role: "user", content: chatInput }
-      ]);
+      // Prepare messages for the API (extract role and content only)
+      const messages = [
+        ...chatMessages.map(m => ({ role: m.role, content: m.content })),
+        { role: "user" as const, content: chatInput }
+      ];
 
       // Prepare chapter context
       const chapterContext = {
@@ -105,7 +128,7 @@ export default function WritePage() {
 
       // Get selected chapters from context (last 3 chapters)
       const selectedChapters = project?.plan?.chapters
-        .filter(c => currentContext.selectedChapters?.includes(`chapter-${c.chapterNumber}`))
+        .filter(c => currentContext.selectedChapters?.includes(c.chapterNumber))
         .map(c => ({
           number: c.chapterNumber,
           title: c.title,
@@ -219,6 +242,51 @@ export default function WritePage() {
       console.error("Generate content error:", error);
     } finally {
       setIsGenerating(false);
+    }
+  };
+
+  const handleCheckContinuity = async () => {
+    const currentContent = editorRef.current?.getText() || content;
+    if (!currentContent || currentContent.trim().length < 50) {
+      alert("Няма достатъчно съдържание за проверка. Напишете поне няколко изречения.");
+      return;
+    }
+
+    setIsCheckingContinuity(true);
+    setContinuityResult(null);
+
+    try {
+      const previousChapters = project?.plan?.chapters
+        .filter(c => c.chapterNumber < chapterId && c.content)
+        .map(c => ({
+          number: c.chapterNumber,
+          title: c.title,
+          content: c.content,
+        }))
+        .slice(-3); // Last 3 chapters for context
+
+      const response = await fetch("/api/ai/continuity", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content: currentContent,
+          masterJson: project?.masterJson,
+          previousChapters,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setContinuityResult(data);
+        setShowContinuityDialog(true);
+      } else {
+        alert("Грешка при проверката. Моля, опитайте отново.");
+      }
+    } catch (error) {
+      console.error("Continuity check error:", error);
+      alert("Грешка при проверката. Моля, опитайте отново.");
+    } finally {
+      setIsCheckingContinuity(false);
     }
   };
 
@@ -411,6 +479,28 @@ export default function WritePage() {
             <TooltipContent>Генерирай един параграф</TooltipContent>
           </Tooltip>
 
+          <div className="mx-2 h-4 w-px bg-zinc-700" />
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleCheckContinuity}
+                disabled={isGenerating || isCheckingContinuity}
+                className="text-amber-400 hover:text-amber-300"
+              >
+                {isCheckingContinuity ? (
+                  <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                ) : (
+                  <AlertTriangle className="mr-1 h-4 w-4" />
+                )}
+                Провери за грешки
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Провери за несъответствия и логически грешки</TooltipContent>
+          </Tooltip>
+
           {isGenerating && (
             <>
               <div className="mx-2 h-4 w-px bg-zinc-700" />
@@ -473,6 +563,115 @@ export default function WritePage() {
           </div>
         </div>
       </div>
+
+      {/* Continuity Check Dialog */}
+      <Dialog open={showContinuityDialog} onOpenChange={setShowContinuityDialog}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {continuityResult?.isConsistent ? (
+                <>
+                  <CheckCircle2 className="h-5 w-5 text-green-500" />
+                  Няма открити проблеми
+                </>
+              ) : (
+                <>
+                  <AlertTriangle className="h-5 w-5 text-amber-500" />
+                  Открити проблеми: {continuityResult?.issues?.length || 0}
+                </>
+              )}
+            </DialogTitle>
+          </DialogHeader>
+
+          {continuityResult && (
+            <div className="space-y-4">
+              {continuityResult.issues && continuityResult.issues.length > 0 && (
+                <div className="space-y-3">
+                  {continuityResult.issues.map((issue, idx) => (
+                    <div
+                      key={idx}
+                      className={cn(
+                        "rounded-lg border p-3",
+                        issue.severity === "high"
+                          ? "border-red-500/50 bg-red-500/10"
+                          : issue.severity === "medium"
+                          ? "border-amber-500/50 bg-amber-500/10"
+                          : "border-zinc-500/50 bg-zinc-500/10"
+                      )}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={cn(
+                              "rounded px-2 py-0.5 text-xs font-medium",
+                              issue.severity === "high"
+                                ? "bg-red-500 text-white"
+                                : issue.severity === "medium"
+                                ? "bg-amber-500 text-white"
+                                : "bg-zinc-500 text-white"
+                            )}
+                          >
+                            {issue.type === "character" && "Персонаж"}
+                            {issue.type === "plot" && "Сюжет"}
+                            {issue.type === "timeline" && "Времева линия"}
+                            {issue.type === "location" && "Локация"}
+                            {issue.type === "logic" && "Логика"}
+                          </span>
+                          <span
+                            className={cn(
+                              "text-xs",
+                              issue.severity === "high"
+                                ? "text-red-400"
+                                : issue.severity === "medium"
+                                ? "text-amber-400"
+                                : "text-zinc-400"
+                            )}
+                          >
+                            {issue.severity === "high" && "Висок приоритет"}
+                            {issue.severity === "medium" && "Среден приоритет"}
+                            {issue.severity === "low" && "Нисък приоритет"}
+                          </span>
+                        </div>
+                      </div>
+                      <p className="mt-2 text-sm text-zinc-200">{issue.description}</p>
+                      {issue.location && (
+                        <p className="mt-1 text-xs text-zinc-400 italic">
+                          &quot;{issue.location}&quot;
+                        </p>
+                      )}
+                      <p className="mt-2 text-sm text-green-400">
+                        💡 {issue.suggestion}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {continuityResult.suggestions && continuityResult.suggestions.length > 0 && (
+                <div className="rounded-lg border border-blue-500/50 bg-blue-500/10 p-3">
+                  <h4 className="font-medium text-blue-400 mb-2">Общи предложения</h4>
+                  <ul className="space-y-1">
+                    {continuityResult.suggestions.map((suggestion, idx) => (
+                      <li key={idx} className="text-sm text-zinc-300">
+                        • {suggestion}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {continuityResult.isConsistent && continuityResult.issues?.length === 0 && (
+                <div className="text-center py-4">
+                  <CheckCircle2 className="mx-auto h-12 w-12 text-green-500 mb-2" />
+                  <p className="text-zinc-300">
+                    Текстът е последователен и не са открити проблеми с континуитета.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Chat Panel */}
       {chatPanelOpen && (

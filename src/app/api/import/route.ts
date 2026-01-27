@@ -67,7 +67,7 @@ async function extractTextFromFile(
   }
 
   if (mimeType === "application/pdf") {
-    // PDF support temporarily disabled - use DOCX or TXT
+    // PDF support temporarily disabled - complex library issues
     throw new Error("PDF файловете временно не се поддържат. Моля, конвертирайте към DOCX или TXT.");
   }
 

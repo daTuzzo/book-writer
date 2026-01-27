@@ -14,12 +14,14 @@ import {
   Plus,
   FolderOpen,
   Database,
+  Download,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useProjectStore } from "@/stores/project-store";
 import { useUIStore } from "@/stores/ui-store";
+import { ExportDialog } from "@/components/export-dialog";
 
 interface SidebarProps {
   projectId?: string;
@@ -172,6 +174,16 @@ export function Sidebar({ projectId }: SidebarProps) {
                   </nav>
                 </div>
               )}
+
+              {/* Export Button */}
+              <div className="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800">
+                <ExportDialog project={currentProject}>
+                  <Button variant="ghost" className="w-full justify-start gap-2">
+                    <Download className="h-4 w-4" />
+                    Експортирай
+                  </Button>
+                </ExportDialog>
+              </div>
             </div>
           )}
         </div>
