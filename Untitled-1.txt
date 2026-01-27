@@ -1,0 +1,194 @@
+[Home](https://www.learncloudnative.com/)
+[Blog](https://www.learncloudnative.com/blog)
+[Newsletter](https://www.learncloudnative.com/newsletter)
+[Sponsors](https://www.learncloudnative.com/sponsors)
+[About](https://www.learncloudnative.com/about)
+[Contact](https://www.learncloudnative.com/contact)
+
+# Accessing Google Drive from Next.js
+
+This short post explains how to integrate Google Drive into your Next.js application. It covers setting up NextAuth.js, creating API routes for Google Drive access, and building a simple UI.
+[pic.twitter.com/0LzJFf3Icm](https://t.co/0LzJFf3Icm)
+[September 22, 2024](https://twitter.com/pjausovec/status/1837666998450561424?ref_src=twsrc%5Etfw)
+
+## 1. Next.js project and Google Drive API setup
+```
+npx create-next-app@latest
+```
+
+[check the Next.js docs](https://nextjs.org/docs/getting-started/installation)
+[GCP project](https://console.cloud.google.com/)
+
+```
+http://localhost:3000/api/auth/callback/google
+```
+
+
+```
+Client ID
+```
+
+
+```
+Client Secret
+```
+
+
+```
+.env.local
+```
+
+
+```
+GOOGLE_CLIENT_ID=your-client-id GOOGLE_CLIENT_SECRET=your-client-secret
+```
+
+
+```
+GOOGLE_CLIENT_ID=your-client-id GOOGLE_CLIENT_SECRET=your-client-secret
+```
+
+## 2. Setting up NextAuth.js
+```
+[...nextauth]/route.ts
+```
+
+
+```
+app/api/auth
+```
+
+
+```
+// app/api/auth/[...nextauth]/route.ts import NextAuth from 'next-auth'; import type { NextAuthOptions } from 'next-auth'; import GoogleProvider from 'next-auth/providers/google'; export const authOptions: NextAuthOptions = { providers: [ GoogleProvider({ clientId: process.env.GOOGLE_CLIENT_ID!, clientSecret: process.env.GOOGLE_CLIENT_SECRET!, authorization: { params: { scope: 'openid email profile https://www.googleapis.com/auth/drive.readonly', prompt: 'consent', access_type: 'offline', response_type: 'code', }, }, }), ], callbacks: { async jwt({ token, account, profile }) { if (account) { token.accessToken = account.access_token; token.refreshToken = account.refresh_token; token.expiresAt = account.expires_at; } if (profile) { token.id = profile.sub; } return token; }, async session({ session, token }) { session.accessToken = token.accessToken as string; session.refreshToken = token.refreshToken as string; session.expiresAt = token.expiresAt as number; if (session.user) { session.user.id = token.id as string; } return session; }, }, session: { strategy: 'jwt', }, }; const handler = NextAuth(authOptions); export { handler as GET, handler as POST };
+```
+
+
+```
+// app/api/auth/[...nextauth]/route.ts import NextAuth from 'next-auth'; import type { NextAuthOptions } from 'next-auth'; import GoogleProvider from 'next-auth/providers/google'; export const authOptions: NextAuthOptions = { providers: [ GoogleProvider({ clientId: process.env.GOOGLE_CLIENT_ID!, clientSecret: process.env.GOOGLE_CLIENT_SECRET!, authorization: { params: { scope: 'openid email profile https://www.googleapis.com/auth/drive.readonly', prompt: 'consent', access_type: 'offline', response_type: 'code', }, }, }), ], callbacks: { async jwt({ token, account, profile }) { if (account) { token.accessToken = account.access_token; token.refreshToken = account.refresh_token; token.expiresAt = account.expires_at; } if (profile) { token.id = profile.sub; } return token; }, async session({ session, token }) { session.accessToken = token.accessToken as string; session.refreshToken = token.refreshToken as string; session.expiresAt = token.expiresAt as number; if (session.user) { session.user.id = token.id as string; } return session; }, }, session: { strategy: 'jwt', }, }; const handler = NextAuth(authOptions); export { handler as GET, handler as POST };
+```
+
+
+```
+https://www.googleapis.com/auth/drive.readonly
+```
+
+
+```
+access_type
+```
+
+
+```
+offline
+```
+
+## 3. Creating an API route to fetch Google Drive folders
+
+```
+folders.ts
+```
+
+
+```
+app/api
+```
+
+
+```
+import { NextRequest, NextResponse } from 'next/server'; import { getToken } from 'next-auth/jwt'; import { google } from 'googleapis'; async function fetchFolderContents( drive: any, folderId: string = 'root' ): Promise<any[]> { const response = await drive.files.list({ q: `'${folderId}' in parents`, fields: 'files(id, name, mimeType, fileExtension, size, iconLink)', }); const items = await Promise.all( response.data.files.map(async (file: any) => { const item: any = { id: file.id, name: file.name, type: file.mimeType === 'application/vnd.google-apps.folder' ? 'folder' : 'file', extension: file.fileExtension, size: file.size, icon: file.iconLink, }; if (item.type === 'folder') { item.children = await fetchFolderContents(drive, file.id); } return item; }) ); return items; } export async function GET(req: NextRequest) { const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET }); if (!token || !token.accessToken) { return NextResponse.json({ error: 'Not authenticated' }, { status: 401 }); } try { const auth = new google.auth.OAuth2( process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET ); auth.setCredentials({ access_token: token.accessToken as string, refresh_token: token.refreshToken as string, expiry_date: token.expiresAt ? (token.expiresAt as number) * 1000 : undefined, }); const drive = google.drive({ version: 'v3', auth }); const structure = await fetchFolderContents(drive); return NextResponse.json({ structure }); } catch (error) { console.error('Error fetching folder structure:', error); return NextResponse.json( { error: 'Failed to fetch folder structure' }, { status: 500 } ); } }
+```
+
+
+```
+import { NextRequest, NextResponse } from 'next/server'; import { getToken } from 'next-auth/jwt'; import { google } from 'googleapis'; async function fetchFolderContents( drive: any, folderId: string = 'root' ): Promise<any[]> { const response = await drive.files.list({ q: `'${folderId}' in parents`, fields: 'files(id, name, mimeType, fileExtension, size, iconLink)', }); const items = await Promise.all( response.data.files.map(async (file: any) => { const item: any = { id: file.id, name: file.name, type: file.mimeType === 'application/vnd.google-apps.folder' ? 'folder' : 'file', extension: file.fileExtension, size: file.size, icon: file.iconLink, }; if (item.type === 'folder') { item.children = await fetchFolderContents(drive, file.id); } return item; }) ); return items; } export async function GET(req: NextRequest) { const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET }); if (!token || !token.accessToken) { return NextResponse.json({ error: 'Not authenticated' }, { status: 401 }); } try { const auth = new google.auth.OAuth2( process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET ); auth.setCredentials({ access_token: token.accessToken as string, refresh_token: token.refreshToken as string, expiry_date: token.expiresAt ? (token.expiresAt as number) * 1000 : undefined, }); const drive = google.drive({ version: 'v3', auth }); const structure = await fetchFolderContents(drive); return NextResponse.json({ structure }); } catch (error) { console.error('Error fetching folder structure:', error); return NextResponse.json( { error: 'Failed to fetch folder structure' }, { status: 500 } ); } }
+```
+
+
+```
+list
+```
+
+
+```
+folderId
+```
+
+## 4. Implementing the frontend component
+
+[shadcn](https://ui.shadcn.com/docs/installation)
+
+```
+'use client'; import React, { useState, useEffect } from 'react'; import { useSession } from 'next-auth/react'; import { Button } from '@/components/ui/button'; import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'; import { Checkbox } from '@/components/ui/checkbox'; import { ScrollArea } from '@/components/ui/scroll-area'; interface Item { id: string; name: string; type: 'folder' | 'file'; extension?: string; children?: Item[]; size?: number; icon?: string; } export default function GoogleDriveComponent() { const { data: session, status } = useSession(); const [structure, setStructure] = useState<Item[]>([]); const [selectedItems, setSelectedItems] = useState<Item[]>([]); const [isLoading, setIsLoading] = useState(true); useEffect(() => { const fetchStructure = async () => { if (status === 'authenticated') { try { setIsLoading(true); const response = await fetch('/api/folders'); if (!response.ok) throw new Error('Failed to fetch folder structure'); const data = await response.json(); setStructure(data.structure); } catch (error) { console.error('Error fetching folder structure:', error); } finally { setIsLoading(false); } } }; fetchStructure(); }, [session, status]); const toggleItemSelection = (item: Item) => { setSelectedItems((prev) => { const index = prev.findIndex((i) => i.id === item.id); if (index > -1) { return prev.filter((i) => i.id !== item.id); } else { return [...prev, item]; } }); }; const renderItem = (item: Item) => ( <li key={item.id} className="mb-1"> <div className="flex items-center space-x-2"> <Checkbox checked={selectedItems.some((i) => i.id === item.id)} onCheckedChange={() => toggleItemSelection(item)} /> <span className="text-sm font-medium">{item.name}</span> </div> {item.type === 'folder' && item.children && ( <ul className="pl-6 mt-1"> {item.children.map((child) => renderItem(child))} </ul> )} </li> ); if (status === 'loading' || isLoading) { return <div>Loading...</div>; } if (status === 'unauthenticated') { return <div>Please sign in to view folders</div>; } return ( <Card> <CardHeader> <CardTitle>Select Items from Google Drive</CardTitle> </CardHeader> <CardContent> <ScrollArea className="h-[300px] w-full border rounded-md p-4"> <ul>{structure.map((item) => renderItem(item))}</ul> </ScrollArea> <div className="mt-4"> <p>{selectedItems.length} item(s) selected</p> <Button onClick={() => console.log(selectedItems)}> Process Selected Files </Button> </div> </CardContent> </Card> ); }
+```
+
+## 4. Implementing the frontend component
+```
+'use client'; import React, { useState, useEffect } from 'react'; import { useSession } from 'next-auth/react'; import { Button } from '@/components/ui/button'; import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'; import { Checkbox } from '@/components/ui/checkbox'; import { ScrollArea } from '@/components/ui/scroll-area'; interface Item { id: string; name: string; type: 'folder' | 'file'; extension?: string; children?: Item[]; size?: number; icon?: string; } export default function GoogleDriveComponent() { const { data: session, status } = useSession(); const [structure, setStructure] = useState<Item[]>([]); const [selectedItems, setSelectedItems] = useState<Item[]>([]); const [isLoading, setIsLoading] = useState(true); useEffect(() => { const fetchStructure = async () => { if (status === 'authenticated') { try { setIsLoading(true); const response = await fetch('/api/folders'); if (!response.ok) throw new Error('Failed to fetch folder structure'); const data = await response.json(); setStructure(data.structure); } catch (error) { console.error('Error fetching folder structure:', error); } finally { setIsLoading(false); } } }; fetchStructure(); }, [session, status]); const toggleItemSelection = (item: Item) => { setSelectedItems((prev) => { const index = prev.findIndex((i) => i.id === item.id); if (index > -1) { return prev.filter((i) => i.id !== item.id); } else { return [...prev, item]; } }); }; const renderItem = (item: Item) => ( <li key={item.id} className="mb-1"> <div className="flex items-center space-x-2"> <Checkbox checked={selectedItems.some((i) => i.id === item.id)} onCheckedChange={() => toggleItemSelection(item)} /> <span className="text-sm font-medium">{item.name}</span> </div> {item.type === 'folder' && item.children && ( <ul className="pl-6 mt-1"> {item.children.map((child) => renderItem(child))} </ul> )} </li> ); if (status === 'loading' || isLoading) { return <div>Loading...</div>; } if (status === 'unauthenticated') { return <div>Please sign in to view folders</div>; } return ( <Card> <CardHeader> <CardTitle>Select Items from Google Drive</CardTitle> </CardHeader> <CardContent> <ScrollArea className="h-[300px] w-full border rounded-md p-4"> <ul>{structure.map((item) => renderItem(item))}</ul> </ScrollArea> <div className="mt-4"> <p>{selectedItems.length} item(s) selected</p> <Button onClick={() => console.log(selectedItems)}> Process Selected Files </Button> </div> </CardContent> </Card> ); }
+```
+
+## Conclusion
+[Peter Jausovec](https://www.learncloudnative.com/author/peterj)
+[@pjausovec](https://twitter.com/pjausovec)
+
+## Contents
+1. 1. Next.js project and Google Drive API setup
+2. 2. Setting up NextAuth.js
+3. 3. Creating an API route to fetch Google Drive folders
+4. 4. Implementing the frontend component
+5. Conclusion
+1. Next.js project and Google Drive API setup
+2. Setting up NextAuth.js
+3. Creating an API route to fetch Google Drive folders
+4. Implementing the frontend component
+Conclusion
+
+#### SHARE THIS ARTICLE
+Join the newsletter and get the latest article and news from the cloud-native world.
+
+## Related Posts
+[Service Mesh](https://www.learncloudnative.com/category/service-mesh)
+[Zero Downtime Releases using Kubernetes and IstioThe idea behind zero downtime release is to release a new version of the service, without affecting any users — i.e., users don't even know when a new version of the service is released. A practical example would be if you have a website running, how can you can you release a new version without taking the site down?](https://www.learncloudnative.com/blog/2019-02-28-zero_downtime_releases_using_kubernetes_and_istio)
+
+### Zero Downtime Releases using Kubernetes and Istio
+The idea behind zero downtime release is to release a new version of the service, without affecting any users — i.e., users don't even know when a new version of the service is released. A practical example would be if you have a website running, how can you can you release a new version without taking the site down?
+Peter Jausovec
+[Kubernetes](https://www.learncloudnative.com/category/kubernetes)
+[Creating a Kubernetes cluster in Google Cloud (LAB)In this first lab in the series of Kubernetes labs, we'll learn how to create a Kubernetes cluster in Google Cloud](https://www.learncloudnative.com/blog/2021-07-07-gcp-k8s-cluster)
+
+### Creating a Kubernetes cluster in Google Cloud (LAB)
+In this first lab in the series of Kubernetes labs, we'll learn how to create a Kubernetes cluster in Google Cloud
+Peter Jausovec
+[Web](https://www.learncloudnative.com/category/web)
+[Accessing Google Drive from Next.jsThis short post explains how to integrate Google Drive into your Next.js application. It covers setting up NextAuth.js, creating API routes for Google Drive access, and building a simple UI.](https://www.learncloudnative.com/blog/2024-09-23-gdrive-from-nextjs)
+
+### Accessing Google Drive from Next.js
+This short post explains how to integrate Google Drive into your Next.js application. It covers setting up NextAuth.js, creating API routes for Google Drive access, and building a simple UI.
+Peter Jausovec
+[Tools](https://www.learncloudnative.com/category/tools)
+[Deploying to Fly.io using Dagger and GithubLearn how to streamline your deployment process using Fly.io, GitHub Actions, and Dagger. This guide walks you through setting up automatic deployments a simple todo app, from basic Fly.io CLI usage to creating efficient, reusable deployment pipelines with Dagger.](https://www.learncloudnative.com/blog/2024-07-20-dagger-fly-io)
+
+### Deploying to Fly.io using Dagger and Github
+Learn how to streamline your deployment process using Fly.io, GitHub Actions, and Dagger. This guide walks you through setting up automatic deployments a simple todo app, from basic Fly.io CLI usage to creating efficient, reusable deployment pipelines with Dagger.
+Peter Jausovec
+[Docker](https://www.learncloudnative.com/category/docker)
+[Docker image tagging schemeIn this short article I'll talk about two things - the latest tag in Docker and why you should be careful when using it and how you should come up with your own tagging scheme for your Docker images.](https://www.learncloudnative.com/blog/2020-05-07-docker-image-tagging-scheme)
+
+### Docker image tagging scheme
+In this short article I'll talk about two things - the latest tag in Docker and why you should be careful when using it and how you should come up with your own tagging scheme for your Docker images.
+Peter Jausovec
+[Kubernetes](https://www.learncloudnative.com/category/kubernetes)
+[Ambassador Container PatternThe ambassador container pattern aims to hide the primary container's complexity and provide a unified interface through which the primary container can access services outside of the Pod.](https://www.learncloudnative.com/blog/2020-10-03-ambassador-pattern)
+
+### Ambassador Container Pattern
+The ambassador container pattern aims to hide the primary container's complexity and provide a unified interface through which the primary container can access services outside of the Pod.
+Peter Jausovec
+[Home](https://www.learncloudnative.com/)
+[Newsletter](https://www.learncloudnative.com/newsletter)
+[Sponsors](https://www.learncloudnative.com/sponsors)
+[About](https://www.learncloudnative.com/about)
+[Contact](https://www.learncloudnative.com/contact)
+[Follow us on TwitterTwitter icon](https://twitter.com/pjausovec)
+[Follow Peter on YouTubeYouTube icon](https://www.youtube.com/channel/UC15DP_38CrM4VjK_Kn_Ld3g?sub_confirmation=1)
+[Join the Learn Cloud Native Discord](https://bit.ly/lcn-discord)
+© 2026 LAB 81 LLC. All Rights Reserved.
