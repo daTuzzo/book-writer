@@ -20,6 +20,7 @@ import {
   ArrowUp,
   Sparkles,
   Loader2,
+  AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -39,6 +40,7 @@ interface ToolbarProps {
   editor: Editor | null;
   selectedText?: string;
   onAIAction?: (action: string, selectedText: string) => void;
+  onContinuityCheck?: () => void;
   onSave?: () => void;
   isSaving?: boolean;
   className?: string;
@@ -91,6 +93,7 @@ export function Toolbar({
   editor,
   selectedText = "",
   onAIAction,
+  onContinuityCheck,
   onSave,
   isSaving = false,
   className,
@@ -100,6 +103,7 @@ export function Toolbar({
   }
 
   const hasSelection = selectedText.length > 0;
+  const hasContent = editor.getText().trim().length > 0;
 
   return (
     <div
@@ -243,6 +247,27 @@ export function Toolbar({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+        </>
+      )}
+
+      {/* Check Continuity */}
+      {onContinuityCheck && hasContent && (
+        <>
+          <div className="mx-1 h-6 w-px bg-zinc-700" />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onContinuityCheck}
+                className="h-8 gap-1 px-2"
+              >
+                <AlertTriangle className="h-4 w-4" />
+                <span className="text-xs hidden sm:inline">Провери последователност</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Провери последователност</TooltipContent>
+          </Tooltip>
         </>
       )}
 

@@ -4,8 +4,8 @@ import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import UnderlineExtension from "@tiptap/extension-underline";
-import { useEffect, forwardRef, useImperativeHandle, useState, useCallback } from "react";
-import { cn } from "@/lib/utils";
+import { useEffect, forwardRef, useImperativeHandle, useState, useCallback, memo } from "react";
+import { cn, countWords, estimateTokens } from "@/lib/utils";
 import { Toolbar } from "./toolbar";
 
 export interface TiptapEditorRef {
@@ -29,6 +29,7 @@ interface TiptapEditorProps {
   editable?: boolean;
   className?: string;
   onAIAction?: (action: string, selectedText: string) => void;
+  onContinuityCheck?: () => void;
 }
 
 const TiptapEditor = forwardRef<TiptapEditorRef, TiptapEditorProps>(
@@ -43,10 +44,13 @@ const TiptapEditor = forwardRef<TiptapEditorRef, TiptapEditorProps>(
       editable = true,
       className,
       onAIAction,
+      onContinuityCheck,
     },
     ref
   ) => {
     const [selectedText, setSelectedText] = useState("");
+    const [wordCount, setWordCount] = useState(0);
+    const [tokenCount, setTokenCount] = useState(0);
 
     // Handle Ctrl+S for save
     const handleKeyDown = useCallback(
@@ -89,7 +93,11 @@ const TiptapEditor = forwardRef<TiptapEditorRef, TiptapEditorProps>(
       editable,
       immediatelyRender: false,
       onUpdate: ({ editor }) => {
-        onChange(editor.getHTML());
+        const html = editor.getHTML();
+        onChange(html);
+        const text = editor.getText();
+        setWordCount(countWords(text));
+        setTokenCount(estimateTokens(text));
       },
       onSelectionUpdate: ({ editor }) => {
         const { from, to } = editor.state.selection;
@@ -125,6 +133,9 @@ const TiptapEditor = forwardRef<TiptapEditorRef, TiptapEditorProps>(
     useEffect(() => {
       if (editor && content !== editor.getHTML()) {
         editor.commands.setContent(content);
+        const text = editor.getText();
+        setWordCount(countWords(text));
+        setTokenCount(estimateTokens(text));
       }
     }, [content, editor]);
 
@@ -164,6 +175,7 @@ const TiptapEditor = forwardRef<TiptapEditorRef, TiptapEditorProps>(
           editor={editor}
           selectedText={selectedText}
           onAIAction={onAIAction}
+          onContinuityCheck={onContinuityCheck}
           onSave={onSave}
           isSaving={isSaving}
           className="mb-4"
@@ -175,6 +187,11 @@ const TiptapEditor = forwardRef<TiptapEditorRef, TiptapEditorProps>(
           className="font-serif"
           style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}
         />
+
+        {/* Word Count Display */}
+        <div className="text-xs text-zinc-500 mt-4">
+          {wordCount} думи • ~{tokenCount} токена
+        </div>
       </div>
     );
   }
@@ -182,4 +199,4 @@ const TiptapEditor = forwardRef<TiptapEditorRef, TiptapEditorProps>(
 
 TiptapEditor.displayName = "TiptapEditor";
 
-export default TiptapEditor;
+export default memo(TiptapEditor);

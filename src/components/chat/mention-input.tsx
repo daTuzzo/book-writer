@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, memo } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
@@ -22,7 +22,7 @@ interface MentionInputProps {
   className?: string;
 }
 
-export function MentionInput({
+export const MentionInput = memo(function MentionInput({
   value,
   onChange,
   onSubmit,
@@ -213,4 +213,4 @@ export function MentionInput({
       </div>
     </div>
   );
-}
+});

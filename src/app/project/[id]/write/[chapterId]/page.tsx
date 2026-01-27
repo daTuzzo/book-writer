@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useParams } from "next/navigation";
 import {
   Sparkles,
@@ -39,6 +39,7 @@ import { useUIStore } from "@/stores/ui-store";
 import { cn, countWords, estimateTokens } from "@/lib/utils";
 import TiptapEditor, { TiptapEditorRef } from "@/components/editor/tiptap-editor";
 import { MentionInput, MentionItem } from "@/components/chat/mention-input";
+import { toast } from "sonner";
 
 export default function WritePage() {
   const params = useParams();
@@ -248,7 +249,7 @@ export default function WritePage() {
   const handleCheckContinuity = async () => {
     const currentContent = editorRef.current?.getText() || content;
     if (!currentContent || currentContent.trim().length < 50) {
-      alert("Няма достатъчно съдържание за проверка. Напишете поне няколко изречения.");
+      toast.error("Няма достатъчно съдържание за проверка. Напишете поне няколко изречения.");
       return;
     }
 
@@ -279,21 +280,29 @@ export default function WritePage() {
         const data = await response.json();
         setContinuityResult(data);
         setShowContinuityDialog(true);
+
+        // Show toast notification
+        if (data.isConsistent && (!data.issues || data.issues.length === 0)) {
+          toast.success("Проверката завърши успешно! Няма открити проблеми с континуитета.");
+        } else {
+          const issueCount = data.issues?.length || 0;
+          toast.warning(`Открити са ${issueCount} проблем${issueCount === 1 ? '' : 'а'} с континуитета. Вижте детайлите в диалога.`);
+        }
       } else {
-        alert("Грешка при проверката. Моля, опитайте отново.");
+        toast.error("Грешка при проверката. Моля, опитайте отново.");
       }
     } catch (error) {
       console.error("Continuity check error:", error);
-      alert("Грешка при проверката. Моля, опитайте отново.");
+      toast.error("Грешка при проверката. Моля, опитайте отново.");
     } finally {
       setIsCheckingContinuity(false);
     }
   };
 
   // Get mention items for @ autocomplete
-  const getMentionItems = useCallback((): MentionItem[] => {
+  const getMentionItems = useMemo((): MentionItem[] => {
     const items: MentionItem[] = [];
-    
+
     // Add chapters
     if (project?.plan?.chapters) {
       project.plan.chapters.forEach((ch) => {
@@ -305,7 +314,7 @@ export default function WritePage() {
         });
       });
     }
-    
+
     // Add characters
     if (project?.masterJson?.characters?.permanent) {
       Object.values(project.masterJson.characters.permanent).forEach((char: any) => {
@@ -317,7 +326,7 @@ export default function WritePage() {
         });
       });
     }
-    
+
     // Add locations
     if (project?.masterJson?.locations?.permanent) {
       Object.values(project.masterJson.locations.permanent).forEach((loc: any) => {
@@ -329,7 +338,7 @@ export default function WritePage() {
         });
       });
     }
-    
+
     // Add plot elements
     if (project?.masterJson?.plotElements?.mainPlot) {
       items.push({
@@ -339,7 +348,7 @@ export default function WritePage() {
         displayName: "Главен сюжет",
       });
     }
-    
+
     if (project?.masterJson?.plotElements?.subplots) {
       project.masterJson.plotElements.subplots.forEach((subplot: any, idx: number) => {
         items.push({
@@ -350,12 +359,12 @@ export default function WritePage() {
         });
       });
     }
-    
+
     return items;
   }, [project]);
 
   // Calculate token usage for context
-  const calculateContextTokens = useCallback(() => {
+  const contextTokens = useMemo(() => {
     let tokens = 0;
     if (currentContext.includeMasterJson && project?.masterJson) {
       tokens += estimateTokens(JSON.stringify(project.masterJson));
@@ -375,6 +384,18 @@ export default function WritePage() {
     return tokens;
   }, [currentContext.includeMasterJson, project, content, chapterId]);
 
+  // Memoize expensive calculations
+  const wordCount = useMemo(() => countWords(content), [content]);
+  const tokenCount = useMemo(() => estimateTokens(content), [content]);
+  const progress = useMemo(() => {
+    if (!chapter?.targetWordCount || chapter.targetWordCount === 0) return 0;
+    return (wordCount / chapter.targetWordCount) * 100;
+  }, [wordCount, chapter?.targetWordCount]);
+
+  const masterJsonTokens = useMemo(() => {
+    return project?.masterJson ? estimateTokens(JSON.stringify(project.masterJson)) : 0;
+  }, [project?.masterJson]);
+
   if (!project || !chapter) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -382,10 +403,6 @@ export default function WritePage() {
       </div>
     );
   }
-
-  const wordCount = countWords(content);
-  const tokenCount = estimateTokens(content);
-  const progress = chapter.targetWordCount > 0 ? (wordCount / chapter.targetWordCount) * 100 : 0;
 
   return (
     <div className="flex h-screen">
@@ -526,7 +543,7 @@ export default function WritePage() {
             </Tooltip>
             {showTokenCalc && (
               <span className="text-xs text-zinc-400">
-                ~{calculateContextTokens().toLocaleString()} токена контекст
+                ~{contextTokens.toLocaleString()} токена контекст
               </span>
             )}
           </div>
@@ -541,6 +558,7 @@ export default function WritePage() {
               onChange={handleContentChange}
               onSelectionChange={handleSelectionChange}
               onAIAction={handleAIAction}
+              onContinuityCheck={handleCheckContinuity}
               placeholder="Започнете да пишете тук... или използвайте AI инструментите за генериране на съдържание."
             />
           </div>
@@ -694,7 +712,7 @@ export default function WritePage() {
               />
             </div>
             <div className="text-xs text-zinc-500">
-              Контекст: ~{estimateTokens(JSON.stringify(project.masterJson)).toLocaleString()} токена
+              Контекст: ~{masterJsonTokens.toLocaleString()} токена
             </div>
           </div>
 
@@ -751,7 +769,7 @@ export default function WritePage() {
               value={chatInput}
               onChange={setChatInput}
               onSubmit={handleSendMessage}
-              mentionItems={getMentionItems()}
+              mentionItems={getMentionItems}
               placeholder="Напишете съобщение... (използвайте @ за референции)"
               disabled={isGenerating}
             />
