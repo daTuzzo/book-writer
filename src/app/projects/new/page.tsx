@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Upload, Sparkles } from "lucide-react";
+import { ArrowLeft, Upload, Sparkles, FileText, Loader2, CheckCircle, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/select";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useProjectStore } from "@/stores/project-store";
+import type { Chapter, Character, Location, AnalyzedStyle } from "@/types";
 
 const GENRES = [
   { value: "fantasy", label: "Фентъзи" },
@@ -55,10 +56,43 @@ const AUDIENCES = [
   { value: "all", label: "Всички възрасти" },
 ];
 
+interface ImportedData {
+  chapters: Array<{
+    chapterNumber: number;
+    title: string;
+    content: string;
+    summary: string;
+  }>;
+  characters: Array<{
+    name: string;
+    description: string;
+    traits: string[];
+  }>;
+  locations: Array<{
+    name: string;
+    description: string;
+    type: string;
+  }>;
+  styleAnalysis: {
+    tone: string;
+    pov: "first" | "third-limited" | "third-omniscient";
+    tense: "past" | "present";
+    descriptionDensity: "sparse" | "moderate" | "rich";
+    dialogueStyle: string;
+  };
+}
+
 export default function NewProjectPage() {
   const router = useRouter();
-  const { createProject } = useProjectStore();
+  const { createProject, updateProject, updateMasterJson, updatePlan } = useProjectStore();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  
   const [isCreating, setIsCreating] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importedFile, setImportedFile] = useState<File | null>(null);
+  const [importedData, setImportedData] = useState<ImportedData | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   const [formData, setFormData] = useState({
     name: "",
@@ -69,12 +103,191 @@ export default function NewProjectPage() {
     targetAudience: "",
   });
 
+  const handleFileSelect = async (file: File) => {
+    // Validate file type
+    const validTypes = [
+      "text/plain",
+      "application/pdf",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/msword",
+    ];
+    
+    if (!validTypes.includes(file.type) && !file.name.endsWith(".txt") && !file.name.endsWith(".docx") && !file.name.endsWith(".pdf")) {
+      setImportError("Невалиден формат. Поддържаме PDF, DOCX и TXT файлове.");
+      return;
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+      setImportError("Файлът е твърде голям. Максимум 10MB.");
+      return;
+    }
+
+    setImportedFile(file);
+    setImportError(null);
+    setIsImporting(true);
+
+    try {
+      const formDataUpload = new FormData();
+      formDataUpload.append("file", file);
+
+      const response = await fetch("/api/import", {
+        method: "POST",
+        body: formDataUpload,
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Грешка при импортиране");
+      }
+
+      setImportedData(result.analysis);
+      
+      // Auto-fill project name from first chapter or file name
+      if (!formData.name) {
+        const autoName = result.analysis.chapters[0]?.title || file.name.replace(/\.[^/.]+$/, "");
+        setFormData(prev => ({ ...prev, name: autoName }));
+      }
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Грешка при импортиране");
+      setImportedFile(null);
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    
+    const file = e.dataTransfer.files[0];
+    if (file) {
+      handleFileSelect(file);
+    }
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  }, []);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsCreating(true);
 
     try {
       const project = createProject(formData);
+
+      // If we have imported data, populate the project
+      if (importedData) {
+        // Convert imported chapters to project format
+        const chapters: Chapter[] = importedData.chapters.map((ch, idx) => ({
+          chapterNumber: ch.chapterNumber || idx + 1,
+          title: ch.title,
+          summary: ch.summary,
+          keyEvents: [],
+          charactersInvolved: [],
+          locationsUsed: [],
+          emotionalArc: "",
+          plotProgressions: [],
+          targetWordCount: ch.content.split(/\s+/).length,
+          actualWordCount: ch.content.split(/\s+/).length,
+          status: "draft" as const,
+          sections: [],
+          content: ch.content,
+        }));
+
+        // Convert imported characters
+        const characters: Record<string, Character> = {};
+        importedData.characters.forEach((char, idx) => {
+          const id = `char-${idx}`;
+          characters[id] = {
+            id,
+            name: char.name,
+            age: "",
+            gender: "",
+            physicalDescription: char.description,
+            personality: char.traits,
+            background: "",
+            motivations: [],
+            relationships: [],
+            speechPatterns: "",
+            beliefs: [],
+          };
+        });
+
+        // Convert imported locations
+        const locations: Record<string, Location> = {};
+        importedData.locations.forEach((loc, idx) => {
+          const id = `loc-${idx}`;
+          locations[id] = {
+            id,
+            name: loc.name,
+            type: loc.type,
+            description: loc.description,
+            geography: "",
+            climate: "",
+            atmosphere: "",
+            significance: "",
+            connectedLocations: [],
+          };
+        });
+
+        // Convert style analysis
+        const analyzedStyle: AnalyzedStyle = {
+          sentenceLength: "medium",
+          paragraphLength: "medium",
+          dialogueStyle: importedData.styleAnalysis.dialogueStyle,
+          descriptionDensity: importedData.styleAnalysis.descriptionDensity,
+          emotionalTone: importedData.styleAnalysis.tone,
+          pacingStyle: "",
+          samplePhrases: [],
+        };
+
+        // Update MasterJSON
+        updateMasterJson(project.id, {
+          projectMetadata: {
+            title: formData.name,
+            genre: formData.genre,
+            style: formData.style,
+            targetWordCount: chapters.reduce((sum, ch) => sum + ch.actualWordCount, 0),
+            currentWordCount: chapters.reduce((sum, ch) => sum + ch.actualWordCount, 0),
+          },
+          characters: {
+            permanent: characters,
+            timeline: [],
+          },
+          locations: {
+            permanent: locations,
+            timeline: [],
+          },
+          styleGuide: {
+            tone: importedData.styleAnalysis.tone,
+            pov: importedData.styleAnalysis.pov,
+            tense: importedData.styleAnalysis.tense,
+            vocabulary: [],
+            avoidWords: [],
+            writingPatterns: [],
+            analyzedStyle,
+          },
+        });
+
+        // Update plan with chapters
+        updatePlan(project.id, {
+          title: formData.name,
+          totalChapters: chapters.length,
+          estimatedWordCount: chapters.reduce((sum, ch) => sum + ch.actualWordCount, 0),
+          structure: "custom",
+          chapters,
+          acts: [],
+        });
+      }
+
       router.push(`/project/${project.id}/plan`);
     } catch (error) {
       console.error("Error creating project:", error);
@@ -84,6 +297,15 @@ export default function NewProjectPage() {
 
   const handleChange = (field: string, value: string) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const clearImport = () => {
+    setImportedFile(null);
+    setImportedData(null);
+    setImportError(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
   };
 
   return (
@@ -104,7 +326,7 @@ export default function NewProjectPage() {
           </div>
           <h1 className="mb-2 text-3xl font-bold text-zinc-50">Нов проект</h1>
           <p className="text-zinc-400">
-            Създайте нов проект за книга и започнете да пишете
+            Създайте нов проект за книга или импортирайте съществуваща
           </p>
         </div>
 
@@ -117,6 +339,101 @@ export default function NewProjectPage() {
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-6">
+              {/* File Upload Section */}
+              <div className="space-y-2">
+                <Label>Импортирайте съществуваща книга (опционално)</Label>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".txt,.pdf,.docx,.doc"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) handleFileSelect(file);
+                  }}
+                />
+                
+                {!importedData && !isImporting && (
+                  <div
+                    className={`flex items-center justify-center rounded-lg border-2 border-dashed transition-colors p-8 cursor-pointer ${
+                      isDragging
+                        ? "border-blue-500 bg-blue-500/10"
+                        : importError
+                        ? "border-red-500/50 bg-red-500/5"
+                        : "border-zinc-700 bg-zinc-900/50 hover:border-zinc-600"
+                    }`}
+                    onDrop={handleDrop}
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <div className="text-center">
+                      {importError ? (
+                        <>
+                          <AlertCircle className="mx-auto h-8 w-8 text-red-500" />
+                          <p className="mt-2 text-sm text-red-400">{importError}</p>
+                          <p className="mt-1 text-xs text-zinc-500">
+                            Кликнете за да опитате отново
+                          </p>
+                        </>
+                      ) : (
+                        <>
+                          <Upload className="mx-auto h-8 w-8 text-zinc-500" />
+                          <p className="mt-2 text-sm text-zinc-400">
+                            Плъзнете файл тук или кликнете за качване
+                          </p>
+                          <p className="mt-1 text-xs text-zinc-500">
+                            PDF, DOCX, TXT до 10MB
+                          </p>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {isImporting && (
+                  <div className="flex items-center justify-center rounded-lg border border-blue-500/50 bg-blue-500/10 p-8">
+                    <div className="text-center">
+                      <Loader2 className="mx-auto h-8 w-8 text-blue-500 animate-spin" />
+                      <p className="mt-2 text-sm text-blue-400">
+                        Анализиране на книгата...
+                      </p>
+                      <p className="mt-1 text-xs text-zinc-500">
+                        Извличане на глави, персонажи и локации
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {importedData && (
+                  <div className="rounded-lg border border-green-500/50 bg-green-500/10 p-4">
+                    <div className="flex items-start gap-3">
+                      <CheckCircle className="h-5 w-5 text-green-500 mt-0.5" />
+                      <div className="flex-1">
+                        <p className="text-sm font-medium text-green-400">
+                          Книгата е импортирана успешно!
+                        </p>
+                        <div className="mt-2 text-xs text-zinc-400 space-y-1">
+                          <p>📚 {importedData.chapters.length} глави</p>
+                          <p>👤 {importedData.characters.length} персонажа</p>
+                          <p>📍 {importedData.locations.length} локации</p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="mt-2 text-xs text-zinc-500 hover:text-zinc-300"
+                          onClick={clearImport}
+                        >
+                          Премахни импорта
+                        </Button>
+                      </div>
+                      <FileText className="h-5 w-5 text-zinc-500" />
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <div className="space-y-2">
                 <Label htmlFor="name">Име на проекта *</Label>
                 <Input
@@ -219,24 +536,6 @@ export default function NewProjectPage() {
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <Label>Качете файлове за контекст (опционално)</Label>
-                <div className="flex items-center justify-center rounded-lg border border-dashed border-zinc-700 bg-zinc-900/50 p-8">
-                  <div className="text-center">
-                    <Upload className="mx-auto h-8 w-8 text-zinc-500" />
-                    <p className="mt-2 text-sm text-zinc-400">
-                      Плъзнете файлове тук или натиснете за качване
-                    </p>
-                    <p className="mt-1 text-xs text-zinc-500">
-                      PDF, DOCX, TXT до 10MB
-                    </p>
-                    <Button variant="outline" size="sm" className="mt-4" type="button">
-                      Изберете файлове
-                    </Button>
-                  </div>
-                </div>
-              </div>
-
               <div className="flex gap-3 pt-4">
                 <Link href="/" className="flex-1">
                   <Button variant="outline" className="w-full" type="button">
@@ -246,9 +545,18 @@ export default function NewProjectPage() {
                 <Button
                   type="submit"
                   className="flex-1"
-                  disabled={!formData.name || isCreating}
+                  disabled={!formData.name || isCreating || isImporting}
                 >
-                  {isCreating ? "Създаване..." : "Създай проект"}
+                  {isCreating ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Създаване...
+                    </>
+                  ) : importedData ? (
+                    "Създай от импорт"
+                  ) : (
+                    "Създай проект"
+                  )}
                 </Button>
               </div>
             </form>
