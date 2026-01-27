@@ -89,14 +89,61 @@ export default function WritePage() {
     setChatInput("");
     setIsGenerating(true);
 
-    // TODO: Integrate with Gemini API
-    setTimeout(() => {
+    try {
+      // Prepare messages for the API
+      const messages = chatMessages.concat([
+        { role: "user", content: chatInput }
+      ]);
+
+      // Prepare chapter context
+      const chapterContext = {
+        number: chapter?.chapterNumber,
+        title: chapter?.title,
+        summary: chapter?.summary,
+        content: content,
+      };
+
+      // Get selected chapters from context (last 3 chapters)
+      const selectedChapters = project?.plan?.chapters
+        .filter(c => currentContext.selectedChapters?.includes(`chapter-${c.chapterNumber}`))
+        .map(c => ({
+          number: c.chapterNumber,
+          title: c.title,
+          content: c.content,
+        }));
+
+      const response = await fetch("/api/ai/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages,
+          masterJson: currentContext.includeMasterJson ? project?.masterJson : null,
+          chapterContext,
+          selectedChapters,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        addMessage(`chapter-${chapterId}`, {
+          role: "assistant",
+          content: data.content,
+        });
+      } else {
+        addMessage(`chapter-${chapterId}`, {
+          role: "assistant",
+          content: "Грешка при комуникация с AI. Моля, опитайте отново.",
+        });
+      }
+    } catch (error) {
+      console.error("Chat error:", error);
       addMessage(`chapter-${chapterId}`, {
         role: "assistant",
-        content: "Това е примерен отговор от AI асистента. Интеграцията с Gemini API ще бъде добавена скоро.",
+        content: "Грешка при комуникация с AI. Моля, опитайте отново.",
       });
+    } finally {
       setIsGenerating(false);
-    }, 1000);
+    }
   };
 
   const handleAIAction = async (action: string, text: string) => {
