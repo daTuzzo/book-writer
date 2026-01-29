@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { generateContent, MODELS, ThinkingLevel } from "@/lib/ai/gemini-client";
+import { analyzeBookOptimized, needsChunkedProcessing } from "@/lib/ai/book-analyzer";
 import mammoth from "mammoth";
 
+// Used only for small books that don't need chunking
 const BOOK_IMPORT_PROMPT = `You are a book analysis expert specializing in Bulgarian literature. Your task is to analyze the provided book text and extract structured information.
 
 ANALYSIS REQUIREMENTS:
@@ -115,51 +117,70 @@ export async function POST(req: NextRequest) {
     }
 
     // Truncate if too long (Gemini context limit)
-    const maxChars = 500000; // ~125k tokens
+    const maxChars = 800000; // Increased limit for chunked processing (~200k tokens)
     if (text.length > maxChars) {
       text = text.substring(0, maxChars);
     }
 
-    // Use Gemini to analyze the book
-    const prompt = `Analyze this Bulgarian book text and extract chapters, characters, locations, and style information.
+    let analysis;
+
+    // Use optimized chunked processing for large books (>40k tokens)
+    if (needsChunkedProcessing(text)) {
+      console.log(`Using optimized chunked analysis for ${text.length} chars`);
+      try {
+        analysis = await analyzeBookOptimized(text, (progress) => {
+          console.log(`Import progress: ${progress}`);
+        });
+      } catch (error) {
+        console.error("Chunked analysis error:", error);
+        return NextResponse.json(
+          { error: "Грешка при анализ на книгата. Моля, опитайте отново." },
+          { status: 500 }
+        );
+      }
+    } else {
+      // Small book - use original single-call approach with Flash model for speed
+      console.log(`Using fast single-pass analysis for ${text.length} chars`);
+      const prompt = `Analyze this Bulgarian book text and extract chapters, characters, locations, and style information.
 
 BOOK TEXT:
 ${text}
 
 Remember to return ONLY valid JSON in the specified format.`;
 
-    const { text: responseText } = await generateContent(
-      prompt,
-      BOOK_IMPORT_PROMPT,
-      {
-        model: MODELS.PRO,
-        thinkingLevel: ThinkingLevel.HIGH,
-        temperature: 0.3,
-        maxOutputTokens: 32768,
-      }
-    );
-
-    // Parse JSON from response
-    let analysis;
-    try {
-      // Try to extract JSON from the response
-      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        throw new Error("No JSON found in response");
-      }
-      analysis = JSON.parse(jsonMatch[0]);
-    } catch (parseError) {
-      console.error("Failed to parse AI response:", responseText);
-      return NextResponse.json(
-        { error: "Грешка при анализ на книгата. Моля, опитайте отново." },
-        { status: 500 }
+      const { text: responseText } = await generateContent(
+        prompt,
+        BOOK_IMPORT_PROMPT,
+        {
+          model: MODELS.FLASH, // Use Flash instead of Pro for speed!
+          thinkingLevel: ThinkingLevel.LOW, // Minimal thinking for extraction
+          temperature: 0.3,
+          maxOutputTokens: 32768,
+        }
       );
+
+      // Parse JSON from response
+      try {
+        // Try to extract JSON from the response
+        const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) {
+          throw new Error("No JSON found in response");
+        }
+        analysis = JSON.parse(jsonMatch[0]);
+      } catch (parseError) {
+        console.error("Failed to parse AI response:", responseText);
+        return NextResponse.json(
+          { error: "Грешка при анализ на книгата. Моля, опитайте отново." },
+          { status: 500 }
+        );
+      }
     }
 
     return NextResponse.json({
       success: true,
       analysis,
       originalTextLength: text.length,
+      usedChunkedProcessing: needsChunkedProcessing(text),
     });
   } catch (error) {
     console.error("Import error:", error);

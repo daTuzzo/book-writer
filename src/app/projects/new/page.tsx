@@ -93,6 +93,7 @@ export default function NewProjectPage() {
   const [importedFile, setImportedFile] = useState<File | null>(null);
   const [importedData, setImportedData] = useState<ImportedData | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [importProgress, setImportProgress] = useState({ message: "", percent: 0 });
 
   const [formData, setFormData] = useState({
     name: "",
@@ -117,42 +118,77 @@ export default function NewProjectPage() {
       return;
     }
 
-    if (file.size > 10 * 1024 * 1024) {
-      setImportError("Файлът е твърде голям. Максимум 10MB.");
+    if (file.size > 15 * 1024 * 1024) {
+      setImportError("Файлът е твърде голям. Максимум 15MB.");
       return;
     }
 
     setImportedFile(file);
     setImportError(null);
     setIsImporting(true);
+    setImportProgress({ message: "Подготовка...", percent: 0 });
 
     try {
       const formDataUpload = new FormData();
       formDataUpload.append("file", file);
 
-      const response = await fetch("/api/import", {
+      // Use streaming endpoint for progress updates
+      const response = await fetch("/api/import/stream", {
         method: "POST",
         body: formDataUpload,
       });
 
-      const result = await response.json();
-
       if (!response.ok) {
-        throw new Error(result.error || "Грешка при импортиране");
+        throw new Error("Грешка при импортиране");
       }
 
-      setImportedData(result.analysis);
-      
-      // Auto-fill project name from first chapter or file name
-      if (!formData.name) {
-        const autoName = result.analysis.chapters[0]?.title || file.name.replace(/\.[^/.]+$/, "");
-        setFormData(prev => ({ ...prev, name: autoName }));
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error("Streaming not supported");
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+
+          const eventMatch = line.match(/event: (\w+)/);
+          const dataMatch = line.match(/data: ([\s\S]+)/);
+
+          if (eventMatch && dataMatch) {
+            const eventType = eventMatch[1];
+            const data = JSON.parse(dataMatch[1]);
+
+            if (eventType === "progress") {
+              setImportProgress({ message: data.message, percent: data.percent });
+            } else if (eventType === "complete") {
+              setImportedData(data.analysis);
+              // Auto-fill project name from first chapter or file name
+              if (!formData.name) {
+                const autoName = data.analysis.chapters[0]?.title || file.name.replace(/\.[^/.]+$/, "");
+                setFormData(prev => ({ ...prev, name: autoName }));
+              }
+            } else if (eventType === "error") {
+              throw new Error(data.error);
+            }
+          }
+        }
       }
     } catch (error) {
       setImportError(error instanceof Error ? error.message : "Грешка при импортиране");
       setImportedFile(null);
     } finally {
       setIsImporting(false);
+      setImportProgress({ message: "", percent: 0 });
     }
   };
 
@@ -383,7 +419,7 @@ export default function NewProjectPage() {
                             Плъзнете файл тук или кликнете за качване
                           </p>
                           <p className="mt-1 text-xs text-zinc-500">
-                            PDF, DOCX, TXT до 10MB
+                            PDF, DOCX, TXT до 15MB
                           </p>
                         </>
                       )}
@@ -392,14 +428,20 @@ export default function NewProjectPage() {
                 )}
 
                 {isImporting && (
-                  <div className="flex items-center justify-center rounded-lg border border-blue-500/50 bg-blue-500/10 p-8">
+                  <div className="rounded-lg border border-blue-500/50 bg-blue-500/10 p-6">
                     <div className="text-center">
                       <Loader2 className="mx-auto h-8 w-8 text-blue-500 animate-spin" />
-                      <p className="mt-2 text-sm text-blue-400">
-                        Анализиране на книгата...
+                      <p className="mt-3 text-sm text-blue-400">
+                        {importProgress.message || "Анализиране на книгата..."}
                       </p>
-                      <p className="mt-1 text-xs text-zinc-500">
-                        Извличане на глави, персонажи и локации
+                      <div className="mt-3 w-full bg-zinc-800 rounded-full h-2 overflow-hidden">
+                        <div
+                          className="h-full bg-blue-500 transition-all duration-300 ease-out"
+                          style={{ width: `${importProgress.percent}%` }}
+                        />
+                      </div>
+                      <p className="mt-2 text-xs text-zinc-500">
+                        {importProgress.percent > 0 ? `${importProgress.percent}%` : "Подготовка..."}
                       </p>
                     </div>
                   </div>
