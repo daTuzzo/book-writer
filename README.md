@@ -38,7 +38,7 @@
 
 1. **Клониране на проекта:**
 ```bash
-git clone https://github.com/jeisan_steisan/book-writer.git
+git clone https://github.com/daTuzzo/book-writer.git
 cd book-writer
 ```
 
@@ -170,8 +170,9 @@ book-writer/
 ## 📞 Помощ
 
 Ако имате проблеми или въпроси:
-- Пишете на Jeisan (@jeisan_steisan) през Telegram
+- Свържете се с Георги (datuzzo)
+- Или пишете на Jeisan през Telegram
 
 ---
 
-*Създадено с ❤️*
+*Създадено с ❤️ от ValoxVSL*
